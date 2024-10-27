@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <pthread.h>
+#include <semaphore.h>
 
 #define MAX_THREADS 48  // nombre maximal de threads
 
@@ -14,16 +15,15 @@ typedef struct {
     long int n;
 } ThreadData;
 
-// Compteur de threads actifs
-int active_threads = 0;
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+sem_t semaphore; // Sémaphore pour contrôler le nombre de threads actifs
 
 void* tri_tableau_thread(void* arg) {
     ThreadData* data = (ThreadData*)arg;
-	
+
     // Tri de la partie donnée
     tri_tableau(data->tableau, data->n);
     
+    sem_post(&semaphore);              // Libérer le sémaphore après la fin du thread
     return NULL;
 }
 
@@ -54,6 +54,9 @@ int main(int argc, char *argv[]) {
         fscanf(fichier_entree, "%d", &tableau[i]);
     }
     fclose(fichier_entree);
+
+    // Initialiser le sémaphore avec le nombre maximal de threads
+    sem_init(&semaphore, 0, MAX_THREADS);
 
     // Calcul du temps de début
     clock_t debut = clock();
@@ -98,6 +101,9 @@ int main(int argc, char *argv[]) {
     // Afficher le temps d'exécution du tri
     printf("Temps d'exécution du tri : %.6f secondes\n", temps_execution);
 
+    // Détruire le sémaphore
+    sem_destroy(&semaphore);
+
     return 0;
 }
 
@@ -118,36 +124,30 @@ void tri_tableau(int *tableau, long int n) {
         droite[i - milieu] = tableau[i];
     }
 
-    // Créer un thread pour trier la partie gauche si le nombre de threads actifs le permet
+    // Créer un thread pour trier la partie gauche si le sémaphore n'est pas plein
     pthread_t thread_gauche;
     ThreadData data_gauche = {gauche, milieu};
-    
+
     int thread_cree = 0;
-    pthread_mutex_lock(&mutex);
-    if (active_threads < MAX_THREADS) {
-        active_threads++;
-        if (pthread_create(&thread_gauche, NULL, tri_tableau_thread, (void *)&data_gauche) != 0) {
-            perror("Erreur lors de la création du thread");
-            active_threads--;
-            pthread_mutex_unlock(&mutex);
-            tri_tableau(gauche, milieu);  // Exécuter le tri de gauche de manière séquentielle si le thread échoue
+    if (sem_trywait(&semaphore) == 0) {
+        // Le sémaphore n'était pas plein, on peut créer un thread
+        if (pthread_create(&thread_gauche, NULL, tri_tableau_thread, (void *)&data_gauche) == 0) {
+            thread_cree = 1;
         } else {
-            pthread_mutex_unlock(&mutex);
-            thread_cree = 1;       
+            perror("Erreur lors de la création du thread");
+            sem_post(&semaphore);  // Libérer le sémaphore si la création du thread échoue
+            tri_tableau(gauche, milieu);  // Exécuter le tri de gauche de manière séquentielle si le thread échoue
         }
     } else {
-        pthread_mutex_unlock(&mutex);
-        tri_tableau(gauche, milieu);  // Exécuter le tri de gauche de manière séquentielle si le nombre de threads actifs est maximum
+        // Le sémaphore est plein, exécuter le tri de manière séquentielle
+        tri_tableau(gauche, milieu);
     }
 
     // Trier la partie droite de manière séquentielle
     tri_tableau(droite, n - milieu);
     
-    if (thread_cree){
+    if (thread_cree) {
         pthread_join(thread_gauche, NULL);  // Attendre la fin du thread
-        pthread_mutex_lock(&mutex);
-        active_threads--;         // Fin du thread, décrémenter le compteur
-        pthread_mutex_unlock(&mutex);
     }
 
     // Fusionner les deux parties triées
