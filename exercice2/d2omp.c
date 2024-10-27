@@ -1,31 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
-#include <pthread.h>
+#include <omp.h>
 
-#define MAX_THREADS 48  // nombre maximal de threads
+#define MAX_THREADS 48
 
-// Prototype de la fonction de tri
+// Compteur global pour le nombre de threads actifs
+int threads_actifs = 0;
+
 void tri_tableau(int *tableau, long int n);
-
-// Structure pour les données à passer au thread
-typedef struct {
-    int *tableau;
-    long int n;
-} ThreadData;
-
-// Compteur de threads actifs
-int active_threads = 0;
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-
-void* tri_tableau_thread(void* arg) {
-    ThreadData* data = (ThreadData*)arg;
-	
-    // Tri de la partie donnée
-    tri_tableau(data->tableau, data->n);
-    
-    return NULL;
-}
 
 int main(int argc, char *argv[]) {
     if (argc != 3) {
@@ -39,7 +21,7 @@ int main(int argc, char *argv[]) {
     }
 
     long int n;
-    fscanf(fichier_entree, "%ld", &n); // Lire le nombre d'entiers
+    fscanf(fichier_entree, "%ld", &n);
 
     // Allouer de la mémoire pour le tableau
     int *tableau = (int *)malloc(n * sizeof(int));
@@ -56,14 +38,13 @@ int main(int argc, char *argv[]) {
     fclose(fichier_entree);
 
     // Calcul du temps de début
-    clock_t debut = clock();
+    double debut = omp_get_wtime();
 
-    // Appeler la fonction de tri
     tri_tableau(tableau, n);
 
     // Calcul du temps de fin
-    clock_t fin = clock();
-    double temps_execution = (double)(fin - debut) / CLOCKS_PER_SEC;
+    double fin = omp_get_wtime();
+    double temps_execution = fin - debut; // Calculer le temps d'exécution
 
     // Ouvrir le fichier de sortie
     FILE *fichier_sortie = fopen(argv[2], "w");
@@ -89,28 +70,23 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Fermer le fichier de sortie
     fclose(fichier_sortie);
-
-    // Libérer la mémoire allouée
     free(tableau);
-
-    // Afficher le temps d'exécution du tri
     printf("Temps d'exécution du tri : %.6f secondes\n", temps_execution);
 
     return 0;
 }
 
-// Fonction de tri par fusion
+
 void tri_tableau(int *tableau, long int n) {
     if (n <= 1) {
         return;
     }
 
-    // Diviser le tableau en deux parties : les tableaux gauche et droite
     long int milieu = n / 2;
     int *gauche = (int *)malloc(milieu * sizeof(int));
     int *droite = (int *)malloc((n - milieu) * sizeof(int));
+
     for (int i = 0; i < milieu; i++) {
         gauche[i] = tableau[i];
     }
@@ -118,36 +94,37 @@ void tri_tableau(int *tableau, long int n) {
         droite[i - milieu] = tableau[i];
     }
 
-    // Créer un thread pour trier la partie gauche si le nombre de threads actifs le permet
-    pthread_t thread_gauche;
-    ThreadData data_gauche = {gauche, milieu};
-    
-    int thread_cree = 0;
-    pthread_mutex_lock(&mutex);
-    if (active_threads < MAX_THREADS) {
-        active_threads++;
-        if (pthread_create(&thread_gauche, NULL, tri_tableau_thread, (void *)&data_gauche) != 0) {
-            perror("Erreur lors de la création du thread");
-            active_threads--;
-            pthread_mutex_unlock(&mutex);
-            tri_tableau(gauche, milieu);  // Exécuter le tri de gauche de manière séquentielle si le thread échoue
-        } else {
-            pthread_mutex_unlock(&mutex);
-            thread_cree = 1;       
+    int executer_en_parallele = 0;
+
+    // Zone critique pour vérifier et ajuster le nombre de threads
+    #pragma omp critical
+    {
+        if (threads_actifs < MAX_THREADS) {
+            threads_actifs++;
+            executer_en_parallele = 1;
         }
-    } else {
-        pthread_mutex_unlock(&mutex);
-        tri_tableau(gauche, milieu);  // Exécuter le tri de gauche de manière séquentielle si le nombre de threads actifs est maximum
     }
 
-    // Trier la partie droite de manière séquentielle
-    tri_tableau(droite, n - milieu);
-    
-    if (thread_cree){
-        pthread_join(thread_gauche, NULL);  // Attendre la fin du thread
-        pthread_mutex_lock(&mutex);
-        active_threads--;         // Fin du thread, décrémenter le compteur
-        pthread_mutex_unlock(&mutex);
+
+    if (executer_en_parallele) {
+        // Lancer tri parallèle pour la partie gauche si des threads sont disponibles
+        #pragma omp task
+        {
+            tri_tableau(gauche, milieu);
+            #pragma omp critical
+            {
+                threads_actifs--;
+            }
+        }
+
+        // Exécuter tri_tableau(droite) dans le programme principal en même temps
+        tri_tableau(droite, n - milieu);
+        // S'assurer que tri_tableau(gauche) a fini
+        #pragma omp taskwait
+    } else {
+        // Si pas de threads disponibles, tri séquentiel pour les deux parties
+        tri_tableau(gauche, milieu);
+        tri_tableau(droite, n - milieu);
     }
 
     // Fusionner les deux parties triées
@@ -162,20 +139,17 @@ void tri_tableau(int *tableau, long int n) {
         }
         k++;
     }
-    // On termine de remplir le tableau avec les éléments restants de gauche
     while (i < milieu) {
         tableau[k] = gauche[i];
         i++;
         k++;
     }
-    // On termine de remplir le tableau avec les éléments restants de droite
     while (j < n - milieu) {
         tableau[k] = droite[j];
         j++;
         k++;
     }
 
-    // Libérer la mémoire allouée pour les deux parties
     free(gauche);
     free(droite);
 }
