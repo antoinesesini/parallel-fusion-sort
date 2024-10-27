@@ -1,11 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <omp.h>
+#include <semaphore.h>
 
-#define MAX_THREADS 48
+#define MAX_THREADS 48  // nombre maximal de threads
 
-// Compteur global pour le nombre de threads actifs
-int threads_actifs = 0;
+sem_t semaphore;  // Déclaration du sémaphore
 
 void tri_tableau(int *tableau, long int n);
 
@@ -23,7 +23,6 @@ int main(int argc, char *argv[]) {
     long int n;
     fscanf(fichier_entree, "%ld", &n);
 
-    // Allouer de la mémoire pour le tableau
     int *tableau = (int *)malloc(n * sizeof(int));
     if (tableau == NULL) {
         perror("Erreur lors de l'allocation mémoire");
@@ -31,22 +30,21 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Lire les n entiers dans le tableau
     for (int i = 0; i < n; i++) {
         fscanf(fichier_entree, "%d", &tableau[i]);
     }
     fclose(fichier_entree);
 
-    // Calcul du temps de début
     double debut = omp_get_wtime();
+
+    // Initialiser le sémaphore avec une valeur de MAX_THREADS
+    sem_init(&semaphore, 0, MAX_THREADS);
 
     tri_tableau(tableau, n);
 
-    // Calcul du temps de fin
     double fin = omp_get_wtime();
-    double temps_execution = fin - debut; // Calculer le temps d'exécution
+    double temps_execution = fin - debut;
 
-    // Ouvrir le fichier de sortie
     FILE *fichier_sortie = fopen(argv[2], "w");
     if (fichier_sortie == NULL) {
         perror("Erreur lors de l'ouverture du fichier de sortie");
@@ -54,13 +52,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Si n <= 1000, écrire tout le tableau trié
     if (n <= 1000) {
         for (int i = 0; i < n; i++) {
             fprintf(fichier_sortie, "%d\n", tableau[i]);
         }
     } else {
-        // Si n > 1000, écrire les 100 premiers, une séparation, et les 100 derniers
         for (int i = 0; i < 100; i++) {
             fprintf(fichier_sortie, "%d\n", tableau[i]);
         }
@@ -74,9 +70,11 @@ int main(int argc, char *argv[]) {
     free(tableau);
     printf("Temps d'exécution du tri : %.6f secondes\n", temps_execution);
 
+    // Détruire le sémaphore
+    sem_destroy(&semaphore);
+
     return 0;
 }
-
 
 void tri_tableau(int *tableau, long int n) {
     if (n <= 1) {
@@ -96,38 +94,25 @@ void tri_tableau(int *tableau, long int n) {
 
     int executer_en_parallele = 0;
 
-    // Zone critique pour vérifier et ajuster le nombre de threads
-    #pragma omp critical
-    {
-        if (threads_actifs < MAX_THREADS) {
-            threads_actifs++;
-            executer_en_parallele = 1;
-        }
+    // Attendre un slot disponible dans le sémaphore pour exécuter en parallèle
+    if (sem_trywait(&semaphore) == 0) {  // Si sémaphore décrémenté avec succès, on peut lancer en parallèle
+        executer_en_parallele = 1;
     }
 
-
     if (executer_en_parallele) {
-        // Lancer tri parallèle pour la partie gauche si des threads sont disponibles
         #pragma omp task
         {
             tri_tableau(gauche, milieu);
-            #pragma omp critical
-            {
-                threads_actifs--;
-            }
+            sem_post(&semaphore);  // Libérer le sémaphore lorsque le thread termine
         }
 
-        // Exécuter tri_tableau(droite) dans le programme principal en même temps
         tri_tableau(droite, n - milieu);
-        // S'assurer que tri_tableau(gauche) a fini
         #pragma omp taskwait
     } else {
-        // Si pas de threads disponibles, tri séquentiel pour les deux parties
         tri_tableau(gauche, milieu);
         tri_tableau(droite, n - milieu);
     }
 
-    // Fusionner les deux parties triées
     int i = 0, j = 0, k = 0;
     while (i < milieu && j < n - milieu) {
         if (gauche[i] < droite[j]) {
@@ -153,4 +138,3 @@ void tri_tableau(int *tableau, long int n) {
     free(gauche);
     free(droite);
 }
-
