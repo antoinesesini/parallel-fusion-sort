@@ -20,8 +20,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    long int n;
-    fscanf(fichier_entree, "%ld", &n);
+    long int n = 10000;
+    //fscanf(fichier_entree, "%ld", &n);
 
     int *tableau = (int *)malloc(n * sizeof(int));
     if (tableau == NULL) {
@@ -30,9 +30,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    srand(time(NULL));
+
     for (int i = 0; i < n; i++) {
-        fscanf(fichier_entree, "%d", &tableau[i]);
+        //fscanf(fichier_entree, "%d", &tableau[i]);
+        tableau[i] = rand() % 10000 + 1;
     }
+
+
     fclose(fichier_entree);
 
     double debut = omp_get_wtime();
