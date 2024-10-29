@@ -16,8 +16,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    long int n = 10000;
-    //fscanf(fichier_entree, "%ld", &n); // Lire le nombre d'entiers
+    long int n;
+    fscanf(fichier_entree, "%ld", &n); // Lire le nombre d'entiers
 
     // Allouer de la mémoire pour le tableau
     int *tableau = (int *)malloc(n * sizeof(int));
@@ -27,12 +27,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Initialiser le générateur de nombres aléatoires
-    srand(time(NULL));
-
     // Remplir le tableau avec des entiers aléatoires entre 1 et 10000
     for (int i = 0; i < n; i++) {
-        tableau[i] = rand() % 10000 + 1;
+        fscanf(fichier_entree, "%d", &tableau[i]);
     }
 
     fclose(fichier_entree);
